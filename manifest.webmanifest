@@ -1,0 +1,17 @@
+{
+  "name": "数独练习",
+  "short_name": "数独练习",
+  "description": "一个适配手机浏览器的数独小游戏，支持笔记、撤销、提示和离线使用。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0e88a0",
+  "theme_color": "#0e88a0",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
