@@ -22,6 +22,8 @@ const state = {
   fixed: [],
   notes: Array.from({ length: 81 }, () => new Set()),
   noteMode: false,
+  hintMode: false,
+  hintDigit: null,
   mistakes: 0,
   history: [],
   future: [],
@@ -54,6 +56,8 @@ function saveProgress() {
     fixed: state.fixed,
     notes: state.notes.map((set) => [...set]),
     noteMode: state.noteMode,
+    hintMode: state.hintMode,
+    hintDigit: state.hintDigit,
     mistakes: state.mistakes,
     elapsed: state.elapsed,
     finished: state.finished,
@@ -77,6 +81,8 @@ function loadProgress() {
       ? data.notes.map((digits) => new Set(digits))
       : Array.from({ length: 81 }, () => new Set());
     state.noteMode = Boolean(data.noteMode);
+    state.hintMode = Boolean(data.hintMode);
+    state.hintDigit = data.hintDigit ?? null;
     state.mistakes = data.mistakes ?? 0;
     state.elapsed = data.elapsed ?? 0;
     state.finished = Boolean(data.finished);
@@ -104,6 +110,8 @@ function loadPuzzle(index = 0) {
   state.notes = Array.from({ length: 81 }, () => new Set());
   state.selected = state.fixed.findIndex((fixed) => !fixed);
   state.noteMode = false;
+  state.hintMode = false;
+  state.hintDigit = null;
   state.mistakes = 0;
   state.history = [];
   state.future = [];
@@ -120,6 +128,7 @@ function loadPuzzle(index = 0) {
 function render() {
   renderBoard();
   renderPads();
+  hintBtn.classList.toggle("active", state.hintMode);
   timerEl.textContent = formatTime(state.elapsed);
   remainingEl.textContent = String(state.board.filter((cell) => cell === 0).length);
   mistakeEl.textContent = `${state.mistakes} / 3`;
@@ -133,6 +142,7 @@ function render() {
 function renderBoard() {
   boardEl.innerHTML = "";
   const selectedValue = state.board[state.selected];
+  const autoNotes = buildAutoNotes();
 
   state.board.forEach((value, index) => {
     const button = document.createElement("button");
@@ -146,18 +156,29 @@ function renderBoard() {
     if (selectedValue && value === selectedValue && index !== state.selected) button.classList.add("same-value");
     if (Math.floor(index / 9) % 3 === 2) button.classList.add("box-row");
     if (value && value !== currentSolution()[index]) button.classList.add("error");
+    if (state.hintMode && state.hintDigit) {
+      if (value === state.hintDigit) {
+        button.classList.add("hint-value");
+      } else if (value === 0 && Number(currentSolution()[index]) === state.hintDigit) {
+        button.classList.add("hint-target");
+      }
+    }
 
     if (value) {
       button.textContent = String(value);
     } else {
       const notes = document.createElement("div");
       notes.className = "notes";
+      const digitsToShow = state.hintMode ? autoNotes[index] : state.notes[index];
       for (let digit = 1; digit <= 9; digit += 1) {
         const dot = document.createElement("span");
         dot.className = "note-dot";
-        if (state.notes[index].has(digit)) {
+        if (digitsToShow.has(digit)) {
           dot.classList.add("active");
           dot.textContent = String(digit);
+          if (state.hintMode && digit === state.hintDigit) {
+            dot.classList.add("hint-match");
+          }
         } else {
           dot.textContent = "";
         }
@@ -168,7 +189,10 @@ function renderBoard() {
 
     button.addEventListener("click", () => {
       state.selected = index;
-      renderBoard();
+      if (state.hintMode) {
+        updateHintDigit();
+      }
+      render();
     });
 
     boardEl.appendChild(button);
@@ -212,6 +236,8 @@ function handleDigit(digit, forceNote = false) {
     return;
   }
 
+  state.hintMode = false;
+  state.hintDigit = null;
   pushHistory();
   state.board[index] = digit;
   state.notes[index].clear();
@@ -245,6 +271,8 @@ function eraseCell() {
   if (state.board[index] === 0 && state.notes[index].size === 0) return;
 
   pushHistory();
+  state.hintMode = false;
+  state.hintDigit = null;
   state.board[index] = 0;
   state.notes[index].clear();
   state.future = [];
@@ -252,27 +280,26 @@ function eraseCell() {
   render();
 }
 
-function giveHint() {
+function toggleHintMode() {
   if (state.finished) return;
-  const emptyIndex = state.board.findIndex((value, index) => value === 0 && !state.fixed[index]);
-  const index = state.board[state.selected] === 0 && !state.fixed[state.selected] ? state.selected : emptyIndex;
-  if (index < 0) return;
-
-  pushHistory();
-  const hintValue = Number(currentSolution()[index]);
-  state.board[index] = hintValue;
-  state.notes[index].clear();
-  clearPeerNotes(index, hintValue);
-  state.selected = index;
-  state.future = [];
-  setMessage(`提示：第 ${Math.floor(index / 9) + 1} 行第 ${(index % 9) + 1} 列应填 ${hintValue}。`);
-
-  if (isSolved()) {
-    state.finished = true;
-    stopTimer();
-    setMessage("完成通关，棋盘已全部解开。");
+  state.hintMode = !state.hintMode;
+  if (!state.hintMode) {
+    state.hintDigit = null;
+    setMessage("已关闭提示视图。");
+    render();
+    return;
   }
 
+  updateHintDigit();
+  if (!state.hintDigit) {
+    state.hintMode = false;
+    setMessage("当前没有可提示的空格。");
+    render();
+    return;
+  }
+
+  const index = state.selected;
+  setMessage(`提示视图：优先观察数字 ${state.hintDigit} 的落点和候选。`);
   render();
 }
 
@@ -287,6 +314,8 @@ function snapshot() {
   return {
     board: [...state.board],
     notes: state.notes.map((set) => [...set]),
+    hintMode: state.hintMode,
+    hintDigit: state.hintDigit,
     mistakes: state.mistakes,
     selected: state.selected,
     finished: state.finished,
@@ -297,6 +326,8 @@ function snapshot() {
 function restore(entry) {
   state.board = [...entry.board];
   state.notes = entry.notes.map((digits) => new Set(digits));
+  state.hintMode = Boolean(entry.hintMode);
+  state.hintDigit = entry.hintDigit ?? null;
   state.mistakes = entry.mistakes;
   state.selected = entry.selected;
   state.finished = entry.finished;
@@ -344,6 +375,59 @@ function isRelated(a, b) {
 
 function currentSolution() {
   return PUZZLES[state.puzzleIndex].solution;
+}
+
+function getCandidates(index) {
+  if (state.board[index] !== 0) return new Set();
+  const blocked = new Set();
+  const row = Math.floor(index / 9);
+  const col = index % 9;
+  const boxRow = Math.floor(row / 3) * 3;
+  const boxCol = Math.floor(col / 3) * 3;
+
+  for (let i = 0; i < 9; i += 1) {
+    blocked.add(state.board[row * 9 + i]);
+    blocked.add(state.board[i * 9 + col]);
+  }
+
+  for (let r = boxRow; r < boxRow + 3; r += 1) {
+    for (let c = boxCol; c < boxCol + 3; c += 1) {
+      blocked.add(state.board[r * 9 + c]);
+    }
+  }
+
+  const candidates = new Set();
+  for (let digit = 1; digit <= 9; digit += 1) {
+    if (!blocked.has(digit)) {
+      candidates.add(digit);
+    }
+  }
+  return candidates;
+}
+
+function buildAutoNotes() {
+  return Array.from({ length: 81 }, (_, index) => {
+    const merged = getCandidates(index);
+    state.notes[index].forEach((digit) => merged.add(digit));
+    return merged;
+  });
+}
+
+function updateHintDigit() {
+  const selectedValue = state.board[state.selected];
+  if (selectedValue) {
+    state.hintDigit = selectedValue;
+    return;
+  }
+
+  const selectedSolutionDigit = Number(currentSolution()[state.selected]);
+  if (selectedSolutionDigit) {
+    state.hintDigit = selectedSolutionDigit;
+    return;
+  }
+
+  const firstEmpty = state.board.findIndex((value) => value === 0);
+  state.hintDigit = firstEmpty >= 0 ? Number(currentSolution()[firstEmpty]) : null;
 }
 
 function isSolved() {
@@ -394,7 +478,7 @@ noteToggleEl.addEventListener("click", () => {
 
 undoBtn.addEventListener("click", undo);
 redoBtn.addEventListener("click", redo);
-hintBtn.addEventListener("click", giveHint);
+hintBtn.addEventListener("click", toggleHintMode);
 eraseBtn.addEventListener("click", eraseCell);
 newGameBtn.addEventListener("click", () => {
   loadPuzzle((state.puzzleIndex + 1) % PUZZLES.length);
@@ -415,7 +499,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key.toLowerCase() === "h") {
-    giveHint();
+    toggleHintMode();
     return;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
